@@ -7,6 +7,7 @@ export class VideoFrameExtractor {
   private fps: number = 0;
   private decodedFrames: VideoFrame[] = [];
   private numberOfFrames: number = 0;
+  private canvas: OffscreenCanvas;
 
   constructor(video: HTMLVideoElement) {
     this.video = video;
@@ -73,18 +74,14 @@ export class VideoFrameExtractor {
           console.error("Frame not found:", frameIndex);
           return;
         }
-        const canvas = document.createElement("canvas");
-        const ctx = canvas.getContext("2d");
-
-        canvas.width = frame.displayWidth;
-        canvas.height = frame.displayHeight;
-
+        const ctx = self.canvas.getContext("2d");
         ctx!.drawImage(frame, 0, 0);
 
-        canvas.toBlob((blob) => {
+        self.canvas.convertToBlob({ type: "image/png" }).then((blob) => {
           const url = URL.createObjectURL(blob!);
           this.src = url;
         });
+
         console.log("Setting currentTime:", value);
         this._currentTime = value;
       },
@@ -99,9 +96,6 @@ export class VideoFrameExtractor {
 
   handleDecodedFrame(frame: VideoFrame) {
     this.decodedFrames.push(frame);
-    if (this.decodedFrames.length === this.numberOfFrames) {
-      console.log("All frames decoded");
-    }
   }
 
   async parseVideo(url: string): Promise<void> {
@@ -160,6 +154,11 @@ export class VideoFrameExtractor {
               codedHeight: videoTrack.track_height,
               description,
             });
+
+            this.canvas = new OffscreenCanvas(
+              videoTrack.track_width,
+              videoTrack.track_height,
+            );
 
             mp4boxFile.onSamples = async (id, user, samples) => {
               this.numberOfFrames = samples.length;
