@@ -26,38 +26,10 @@ export class VideoFrameExtractor {
     if (this.decodedFrames.length === 0) {
       throw new Error("No frames decoded");
     }
-    // Create a new image element
-    const imgElement = document.createElement("img");
-
-    // Copy attributes from video element to image element, excluding src
-    const attrs = this.video.attributes;
-    for (i = 0; i < attrs.length; i++) {
-      var attr = attrs[i];
-      if (attr.name !== "src") {
-        imgElement.setAttribute(attr.name, attr.value);
-      }
-    }
-
-    // Copy class list
-    imgElement.className = this.video.className;
-
-    // Copy id
-    imgElement.id = this.video.id;
-
-    // Copy inline styles
-    imgElement.style.cssText = this.video.style.cssText;
-
-    // Copy computed styles to ensure all CSS properties and painting are the same
-    const computedStyle = window.getComputedStyle(this.video);
-    for (i = 0; i < computedStyle.length; i++) {
-      var prop = computedStyle[i];
-      // @ts-ignore
-      imgElement.style[prop] = computedStyle.getPropertyValue(prop);
-    }
 
     const self = this;
     // Create a handler for currentTime
-    Object.defineProperty(imgElement, "currentTime", {
+    Object.defineProperty(this.video, "currentTime", {
       get: function () {
         // Implement getter as needed
         return this._currentTime || 0;
@@ -76,7 +48,8 @@ export class VideoFrameExtractor {
 
         self.canvas!.convertToBlob({ type: "image/png" }).then((blob) => {
           const url = URL.createObjectURL(blob!);
-          this.src = url;
+          //this.src = url;
+          this.setAttribute("poster", url);
         });
 
         console.log("Setting currentTime:", value);
@@ -87,8 +60,7 @@ export class VideoFrameExtractor {
     });
 
     // Replace the video element with the image element in the DOM
-    this.video!.parentNode!.replaceChild(imgElement, this.video);
-    (imgElement as any).currentTime = 0;
+    this.video.currentTime = 0;
   }
 
   handleDecodedFrame(frame: VideoFrame) {
