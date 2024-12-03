@@ -3,14 +3,16 @@ import DataStream from "./datastream/DataStream.ts";
 
 export class VideoFrameExtractor {
   private video: HTMLVideoElement;
+  private posterElement: HTMLVideoElement;
   private frameCache: Map<number, ImageBitmap>;
   private fps: number = 0;
   private decodedFrames: VideoFrame[] = [];
   private numberOfFrames: number = 0;
   private canvas: OffscreenCanvas;
 
-  constructor(video: HTMLVideoElement) {
+  constructor(video: HTMLVideoElement, posterElement: HTMLVideoElement) {
     this.video = video;
+    this.posterElement = posterElement;
     this.frameCache = new Map();
   }
 
@@ -80,6 +82,7 @@ export class VideoFrameExtractor {
         self.canvas.convertToBlob({ type: "image/png" }).then((blob) => {
           const url = URL.createObjectURL(blob!);
           this.src = url;
+          self.posterElement?.setAttribute("poster", url);
         });
 
         console.log("Setting currentTime:", value);
@@ -136,7 +139,7 @@ export class VideoFrameExtractor {
                 const stream = new DataStream(
                   undefined,
                   0,
-                  DataStream.BIG_ENDIAN,
+                  DataStream.BIG_ENDIAN
                 );
                 if (entry.avcC) {
                   entry.avcC.write(stream);
@@ -157,7 +160,7 @@ export class VideoFrameExtractor {
 
             this.canvas = new OffscreenCanvas(
               videoTrack.track_width,
-              videoTrack.track_height,
+              videoTrack.track_height
             );
 
             mp4boxFile.onSamples = async (id, user, samples) => {
@@ -170,7 +173,7 @@ export class VideoFrameExtractor {
                     timestamp: (sample.cts * 1_000_000) / sample.timescale,
                     duration: (sample.duration * 1_000_000) / sample.timescale,
                     data: sample.data,
-                  }),
+                  })
                 );
               }
               await videoDecoder.flush();
@@ -179,7 +182,7 @@ export class VideoFrameExtractor {
               console.log(
                 "Demux complete, created",
                 samples.length,
-                "frames encode requests",
+                "frames encode requests"
               );
               resolve();
             };
