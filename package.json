@@ -1,0 +1,22 @@
+{
+  "name": "video-decoder-tests",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "typescript": "~5.6.2",
+    "vite": "^6.0.1"
+  },
+  "dependencies": {
+    "@types/text-encoding": "^0.0.40",
+    "demuxer": "^2.3.0",
+    "mp4box": "^0.5.3",
+    "mux.js": "^6.3.0",
+    "text-encoding": "^0.7.0"
+  }
+}
