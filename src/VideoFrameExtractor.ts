@@ -3,26 +3,23 @@ import DataStream from "./datastream/DataStream.ts";
 
 export class VideoFrameExtractor {
   private video: HTMLVideoElement;
-  private frameCache: Map<number, ImageBitmap>;
   private fps: number = 0;
   private decodedFrames: VideoFrame[] = [];
-  private numberOfFrames: number = 0;
-  private canvas: OffscreenCanvas;
+  private canvas: OffscreenCanvas | null = null;
 
   constructor(video: HTMLVideoElement) {
     this.video = video;
-    this.frameCache = new Map();
   }
 
   async start() {
     this.decodedFrames = [];
-    this.numberOfFrames = 0;
     await this.parseVideo(this.video.src);
     console.log("FPS:", this.fps);
     this.replaceVideoWithImage();
   }
 
   replaceVideoWithImage() {
+    let i;
     if (!this.video) {
       throw new Error("Video element not found");
     }
@@ -33,8 +30,8 @@ export class VideoFrameExtractor {
     const imgElement = document.createElement("img");
 
     // Copy attributes from video element to image element, excluding src
-    var attrs = this.video.attributes;
-    for (var i = 0; i < attrs.length; i++) {
+    const attrs = this.video.attributes;
+    for (i = 0; i < attrs.length; i++) {
       var attr = attrs[i];
       if (attr.name !== "src") {
         imgElement.setAttribute(attr.name, attr.value);
@@ -51,8 +48,8 @@ export class VideoFrameExtractor {
     imgElement.style.cssText = this.video.style.cssText;
 
     // Copy computed styles to ensure all CSS properties and painting are the same
-    var computedStyle = window.getComputedStyle(this.video);
-    for (var i = 0; i < computedStyle.length; i++) {
+    const computedStyle = window.getComputedStyle(this.video);
+    for (i = 0; i < computedStyle.length; i++) {
       var prop = computedStyle[i];
       // @ts-ignore
       imgElement.style[prop] = computedStyle.getPropertyValue(prop);
@@ -74,10 +71,10 @@ export class VideoFrameExtractor {
           console.error("Frame not found:", frameIndex);
           return;
         }
-        const ctx = self.canvas.getContext("2d");
+        const ctx = self.canvas!.getContext("2d");
         ctx!.drawImage(frame, 0, 0);
 
-        self.canvas.convertToBlob({ type: "image/png" }).then((blob) => {
+        self.canvas!.convertToBlob({ type: "image/png" }).then((blob) => {
           const url = URL.createObjectURL(blob!);
           this.src = url;
         });
@@ -161,7 +158,6 @@ export class VideoFrameExtractor {
             );
 
             mp4boxFile.onSamples = async (id, user, samples) => {
-              this.numberOfFrames = samples.length;
               console.log("Demuxing", samples.length, "frames");
               for (const sample of samples) {
                 videoDecoder.decode(
