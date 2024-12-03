@@ -1,119 +1,208 @@
-import MP4Box, {MP4ArrayBuffer} from 'mp4box';
+import MP4Box, { MP4ArrayBuffer } from "mp4box";
 import DataStream from "./datastream/DataStream.ts";
 
 export class VideoFrameExtractor {
-    private video: HTMLVideoElement;
-    private frameCache: Map<number, ImageBitmap>;
-    private fps: number;
-    constructor(video: HTMLVideoElement) {
-        this.video = video;
-        this.frameCache = new Map();
+  private video: HTMLVideoElement;
+  private frameCache: Map<number, ImageBitmap>;
+  private fps: number = 0;
+  private decodedFrames: VideoFrame[] = [];
+  private numberOfFrames: number = 0;
 
+  constructor(video: HTMLVideoElement) {
+    this.video = video;
+    this.frameCache = new Map();
+  }
+
+  async start() {
+    this.decodedFrames = [];
+    this.numberOfFrames = 0;
+    await this.parseVideo(this.video.src);
+    console.log("FPS:", this.fps);
+    this.replaceVideoWithImage();
+  }
+
+  replaceVideoWithImage() {
+    if (!this.video) {
+      throw new Error("Video element not found");
     }
-    async start () {
-        this.fps = await this.parseVideo(this.video.src);
-        console.log('FPS:', this.fps);
+    if (this.decodedFrames.length === 0) {
+      throw new Error("No frames decoded");
     }
-    async getFrameAtTime(time: number): Promise<ImageBitmap> {
-        const frameIndex = Math.floor(time * this.fps);
-        if (this.frameCache.has(frameIndex)) {
-            return this.frameCache.get(frameIndex)!;
+    // Create a new image element
+    const imgElement = document.createElement("img");
+
+    // Copy attributes from video element to image element, excluding src
+    var attrs = this.video.attributes;
+    for (var i = 0; i < attrs.length; i++) {
+      var attr = attrs[i];
+      if (attr.name !== "src") {
+        imgElement.setAttribute(attr.name, attr.value);
+      }
+    }
+
+    // Copy class list
+    imgElement.className = this.video.className;
+
+    // Copy id
+    imgElement.id = this.video.id;
+
+    // Copy inline styles
+    imgElement.style.cssText = this.video.style.cssText;
+
+    // Copy computed styles to ensure all CSS properties and painting are the same
+    var computedStyle = window.getComputedStyle(this.video);
+    for (var i = 0; i < computedStyle.length; i++) {
+      var prop = computedStyle[i];
+      // @ts-ignore
+      imgElement.style[prop] = computedStyle.getPropertyValue(prop);
+    }
+
+    const self = this;
+    // Create a handler for currentTime
+    Object.defineProperty(imgElement, "currentTime", {
+      get: function () {
+        // Implement getter as needed
+        return this._currentTime || 0;
+      },
+      set: async function (value) {
+        console.log("Setting currentTime:", value);
+        // Fetch the frame from the cache
+        const frameIndex = Math.floor(value * self.fps);
+        const frame: VideoFrame = self.decodedFrames[frameIndex];
+        if (!frame) {
+          console.error("Frame not found:", frameIndex);
+          return;
         }
-        const frame = await this.decodeFrame(frameIndex);
-        this.frameCache.set(frameIndex, frame);
-        return frame;
-    }
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d");
 
-    handleDecodedFrame = (frame: VideoFrame) => {
-        console.log('Decoded frame:', frame);
-    }
+        canvas.width = frame.displayWidth;
+        canvas.height = frame.displayHeight;
 
-    async parseVideo(url: string): Promise<number> {
-        return new Promise(async (resolve, reject) => {
-            try {
-                // Fetch the file from the URL
-                const response = await fetch(url);
+        ctx!.drawImage(frame, 0, 0);
 
-                if (!response.ok) {
-                    throw new Error(`Failed to fetch file: ${response.statusText}`);
-                }
-
-                // Read the response as an ArrayBuffer
-                const arrayBuffer = await response.arrayBuffer();
-
-                // Create a new mp4box file instance
-                const mp4boxFile = MP4Box.createFile();
-                mp4boxFile.onReady =  (info) => {
-                    // Find the video track
-                    console.log('info:', info);
-                    const videoTrack = info.tracks.find(track => track.movie_duration);
-                    console.log('Video track:', videoTrack);
-                    if (videoTrack) {
-                        const timescale = videoTrack.timescale;
-                        const duration = videoTrack.duration; // in timescale units
-                        const frameCount = videoTrack.nb_samples;
-                        const fps = frameCount / (duration / timescale);
-
-                        const videoDecoder = new VideoDecoder({
-                            output: (frame) => this.handleDecodedFrame (frame),
-                            error: (error) => console.error('Decoding error:', error),
-                        });
-
-                        let description: Uint8Array | undefined;
-                        const trak = mp4boxFile.getTrackById(videoTrack.id);
-                        for (const entry of trak.mdia.minf.stbl.stsd.entries) {
-                            if (entry.avcC || entry.hvcC) {
-                                const stream = new DataStream(undefined, 0, DataStream.BIG_ENDIAN);
-                                if (entry.avcC) {
-                                    entry.avcC.write(stream);
-                                } else {
-                                    entry.hvcC.write(stream);
-                                }
-                                description = new Uint8Array(stream.buffer, 8); // Remove the box header.
-                                break;
-                            }
-                        }
-
-                        videoDecoder.configure({
-                            codec: videoTrack.codec,
-                            codedWidth: videoTrack.track_width,
-                            codedHeight: videoTrack.track_height,
-                            description,
-                        });
-
-                        mp4boxFile.onSamples = async (id, user, samples) => {
-                            for (const sample of samples) {
-                                videoDecoder.decode(new EncodedVideoChunk({
-                                    type: sample.is_sync ? "key" : "delta",
-                                    timestamp: sample.cts * 1_000_000 / sample.timescale,
-                                    duration: sample.duration * 1_000_000 / sample.timescale,
-                                    data: sample.data
-                                }));
-                            }
-                            await videoDecoder.flush();
-                        };
-                        mp4boxFile.setExtractionOptions(videoTrack.id, videoTrack);
-                        mp4boxFile.start();
-
-                        resolve(fps);
-                    } else {
-                        reject('No video track found.');
-                    }
-                };
-
-
-
-                // Convert ArrayBuffer to MP4Box format
-                const mp4Buffer = arrayBuffer as MP4ArrayBuffer;
-                mp4Buffer.fileStart = 0;
-
-                // Append the buffer to the mp4box file
-                mp4boxFile.appendBuffer(mp4Buffer);
-            } catch (error) {
-                reject(error);
-            }
+        canvas.toBlob((blob) => {
+          const url = URL.createObjectURL(blob!);
+          this.src = url;
         });
+        console.log("Setting currentTime:", value);
+        this._currentTime = value;
+      },
+      configurable: true,
+      enumerable: true,
+    });
 
+    // Replace the video element with the image element in the DOM
+    this.video!.parentNode!.replaceChild(imgElement, this.video);
+    (imgElement as any).currentTime = 0;
+  }
+
+  handleDecodedFrame(frame: VideoFrame) {
+    this.decodedFrames.push(frame);
+    if (this.decodedFrames.length === this.numberOfFrames) {
+      console.log("All frames decoded");
     }
+  }
 
+  async parseVideo(url: string): Promise<void> {
+    return new Promise(async (resolve, reject) => {
+      try {
+        // Fetch the file from the URL
+        const response = await fetch(url);
+
+        if (!response.ok) {
+          throw new Error(`Failed to fetch file: ${response.statusText}`);
+        }
+
+        // Read the response as an ArrayBuffer
+        const arrayBuffer = await response.arrayBuffer();
+
+        // Create a new mp4box file instance
+        const mp4boxFile = MP4Box.createFile();
+        mp4boxFile.onReady = (info) => {
+          // Find the video track
+          console.log("info:", info);
+          const videoTrack = info.tracks.find((track) => track.movie_duration);
+          console.log("Video track:", videoTrack);
+          if (videoTrack) {
+            const timescale = videoTrack.timescale;
+            const duration = videoTrack.duration; // in timescale units
+            const frameCount = videoTrack.nb_samples;
+            const fps = frameCount / (duration / timescale);
+
+            const videoDecoder = new VideoDecoder({
+              output: (frame) => this.handleDecodedFrame(frame),
+              error: (error) => console.error("Decoding error:", error),
+            });
+
+            let description: Uint8Array | undefined;
+            const trak = mp4boxFile.getTrackById(videoTrack.id);
+            for (const entry of trak.mdia.minf.stbl.stsd.entries) {
+              if (entry.avcC || entry.hvcC) {
+                const stream = new DataStream(
+                  undefined,
+                  0,
+                  DataStream.BIG_ENDIAN,
+                );
+                if (entry.avcC) {
+                  entry.avcC.write(stream);
+                } else {
+                  entry.hvcC.write(stream);
+                }
+                description = new Uint8Array(stream.buffer, 8); // Remove the box header.
+                break;
+              }
+            }
+
+            videoDecoder.configure({
+              codec: videoTrack.codec,
+              codedWidth: videoTrack.track_width,
+              codedHeight: videoTrack.track_height,
+              description,
+            });
+
+            mp4boxFile.onSamples = async (id, user, samples) => {
+              this.numberOfFrames = samples.length;
+              console.log("Demuxing", samples.length, "frames");
+              for (const sample of samples) {
+                videoDecoder.decode(
+                  new EncodedVideoChunk({
+                    type: sample.is_sync ? "key" : "delta",
+                    timestamp: (sample.cts * 1_000_000) / sample.timescale,
+                    duration: (sample.duration * 1_000_000) / sample.timescale,
+                    data: sample.data,
+                  }),
+                );
+              }
+              await videoDecoder.flush();
+              videoDecoder.close();
+              mp4boxFile.flush();
+              console.log(
+                "Demux complete, created",
+                samples.length,
+                "frames encode requests",
+              );
+              resolve();
+            };
+            mp4boxFile.setExtractionOptions(videoTrack.id, videoTrack, {
+              nbSamples: Infinity,
+            });
+            mp4boxFile.start();
+            this.fps = fps;
+          } else {
+            reject("No video track found.");
+          }
+        };
+
+        // Convert ArrayBuffer to MP4Box format
+        const mp4Buffer = arrayBuffer as MP4ArrayBuffer;
+        mp4Buffer.fileStart = 0;
+
+        // Append the buffer to the mp4box file
+        mp4boxFile.appendBuffer(mp4Buffer);
+      } catch (error) {
+        reject(error);
+      }
+    });
+  }
 }

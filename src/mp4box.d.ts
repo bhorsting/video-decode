@@ -67,6 +67,8 @@ declare module "mp4box" {
         flush(): void;
 
         getTrackById(id): any;
+
+        setExtractionOptions(id: number, videoTrack: MP4VideoTrack | MP4AudioTrack, p: { nbSamples: number }): void;
     }
 
     export function createFile(): MP4File;
