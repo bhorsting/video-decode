@@ -221,7 +221,7 @@ export class VideoFrameExtractor {
               videoTrack.track_height,
             );
 
-            mp4boxFile.onSamples = async (id, user, samples) => {
+            mp4boxFile.onSamples = async (_id, _user, samples) => {
               console.log("Demuxing", samples.length, "frames");
               for (const sample of samples) {
                 this.samples.push(sample);
