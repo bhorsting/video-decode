@@ -1,20 +1,17 @@
-import MP4Box, { MP4ArrayBuffer } from "mp4box";
-import DataStream from "./datastream/DataStream.ts";
 import { LibAVDemuxer } from "./demux/LibAVDemuxer.ts";
 
 export class VideoFrameExtractor {
   private video: HTMLVideoElement;
   private fps: number = 0;
-  private frameCount: number = 0;
   private decodedFrames: VideoFrame[] = [];
   private canvas: OffscreenCanvas | null = null;
   private videoDecoder: VideoDecoder | undefined;
-  private mp4boxFile: MP4Box.MP4File | undefined;
   private samples: any[] = [];
 
   private decodeResolver?: (value: VideoFrame) => void;
   private decodePromise?: Promise<VideoFrame>;
   private requestedFrameIndex: number = Infinity;
+  private parsePromise: Promise<void>;
 
   constructor(video: HTMLVideoElement) {
     this.video = video;
@@ -23,12 +20,57 @@ export class VideoFrameExtractor {
     });
   }
 
+  overrideCurrentTime() {
+    const self = this;
+    // Create a handler for currentTime
+    Object.defineProperty(this.video, "currentTime", {
+      get: function () {
+        // Return the stored _currentTime
+        return this._currentTime || 0;
+      },
+      set: async function (value) {
+        console.log("Setting currentTime:", value, self.parsePromise);
+        await self.parsePromise;
+        console.log("Set currentTime:", value);
+
+        // Calculate the frame index
+        const frameIndex = Math.ceil(value * self.fps);
+        self.requestedFrameIndex = frameIndex;
+
+        // Decode the frame or fetch from cache
+        let frame: VideoFrame = self.decodedFrames[frameIndex];
+        if (!frame) {
+          frame = await self.createVideoFrameFromSample(frameIndex);
+        }
+
+        // Draw the frame to the canvas and update the poster
+        const ctx = self.canvas!.getContext("2d");
+        ctx!.drawImage(frame, 0, 0);
+
+        const blob = await self.canvas!.convertToBlob({ type: "image/png" });
+        const url = URL.createObjectURL(blob);
+        this.setAttribute("poster", url);
+
+        // Store the current time after everything is set
+        this._currentTime = value;
+
+        console.log("Poster updated and currentTime set:", value);
+        self.video.dispatchEvent(new Event("timeupdate"));
+      },
+      configurable: true,
+      enumerable: true,
+    });
+  }
+
   async start() {
     this.decodedFrames = [];
     this.samples = [];
-    await this.parseVideo(this.video.src);
-    console.log("FPS:", this.fps);
-    this.replaceVideoWithImage();
+    this.overrideCurrentTime();
+    this.parsePromise = this.parseVideo(this.video.src);
+    this.parsePromise.then(() => {
+      console.log("parsePromise done. FPS:", this.fps);
+      this.replaceVideoWithImage();
+    });
   }
 
   sampleIsSync(sample: any) {
@@ -56,15 +98,7 @@ export class VideoFrameExtractor {
       this.checkShouldResolve(sampleIndex);
       return;
     }
-    const sample = this.samples[sampleIndex];
-    this.videoDecoder!.decode(
-      new EncodedVideoChunk({
-        type: sample.is_sync ? "key" : "delta",
-        timestamp: (sample.cts * 1_000_000) / sample.timescale,
-        duration: (sample.duration * 1_000_000) / sample.timescale,
-        data: sample.data,
-      }),
-    );
+    this.videoDecoder!.decode(this.samples[sampleIndex]);
   }
 
   async createVideoFrameFromSample(sampleIndex: number): Promise<VideoFrame> {
@@ -97,45 +131,6 @@ export class VideoFrameExtractor {
       throw new Error("No samples demuxed");
     }
 
-    const self = this;
-
-    // Create a handler for currentTime
-    Object.defineProperty(this.video, "currentTime", {
-      get: function () {
-        // Return the stored _currentTime
-        return this._currentTime || 0;
-      },
-      set: async function (value) {
-        console.log("Setting currentTime:", value);
-
-        // Calculate the frame index
-        const frameIndex = Math.ceil(value * self.fps);
-        self.requestedFrameIndex = frameIndex;
-
-        // Decode the frame or fetch from cache
-        let frame: VideoFrame = self.decodedFrames[frameIndex];
-        if (!frame) {
-          frame = await self.createVideoFrameFromSample(frameIndex);
-        }
-
-        // Draw the frame to the canvas and update the poster
-        const ctx = self.canvas!.getContext("2d");
-        ctx!.drawImage(frame, 0, 0);
-
-        const blob = await self.canvas!.convertToBlob({ type: "image/png" });
-        const url = URL.createObjectURL(blob);
-        this.setAttribute("poster", url);
-
-        // Store the current time after everything is set
-        this._currentTime = value;
-
-        console.log("Poster updated and currentTime set:", value);
-        self.video.dispatchEvent(new Event("timeupdate"));
-      },
-      configurable: true,
-      enumerable: true,
-    });
-
     // Initialize by setting the currentTime to 0
     this.video.currentTime = 0;
   }
@@ -145,6 +140,7 @@ export class VideoFrameExtractor {
       this.decodedFrames[frameNumber] &&
       frameNumber === this.requestedFrameIndex
     ) {
+      console.log("Resolving requestedFrameIndex:", this.requestedFrameIndex);
       this.decodeResolver!(this.decodedFrames[frameNumber]);
     }
   }
@@ -156,7 +152,7 @@ export class VideoFrameExtractor {
         console.log("fetching", url);
         let response: Response;
         try {
-          response = await fetch(url, { mode: "cors" });
+          response = await fetch(url);
         } catch (e) {
           console.error("Failed to fetch file:", e);
           reject(e);
@@ -168,7 +164,8 @@ export class VideoFrameExtractor {
         }
 
         // Read the response as an ArrayBuffer
-        const blob = await response.blob();
+        const arrayBuffer = await response.arrayBuffer();
+        const blob = new Blob([arrayBuffer]);
         const frameDecodedHandler = async (frame: VideoFrame) => {
           const frameNumber = Math.ceil(
             (frame.timestamp / 1_000_000) * this.fps,
@@ -177,104 +174,32 @@ export class VideoFrameExtractor {
           this.checkShouldResolve(frameNumber);
         };
         const demuxer: LibAVDemuxer = new LibAVDemuxer();
-        /*
-        <option value="vp09.00.10.08.03.1.1.1.0">VP9</option>
-                <option value="avc1.42403e">H.264</option>
-         */
         const result = await demuxer.start({
-          videoCodec: "avc1.42403e",
           file: blob,
           frameDecodedHandler,
         });
 
-        console.log("Demuxed", result.chunks.length, "chunks");
+        const { chunks, config, videoStream, decoders } = result;
+        //const timescale = videoStream.time_base_den;
+        const duration = videoStream.duration;
+        const frameCount = chunks.length;
+        const fps = frameCount / duration;
 
-        // Create a new mp4box file instance
-        /*
-        mp4boxFile.onReady = (info) => {
-          // Find the video track
-          const videoTrack = info.tracks.find((track) => track.movie_duration);
-          if (videoTrack) {
-            const timescale = videoTrack.timescale;
-            const duration = videoTrack.duration; // in timescale units
-            const frameCount = videoTrack.nb_samples;
-            this.frameCount = frameCount;
-            const fps = frameCount / (duration / timescale);
+        this.videoDecoder = decoders[0];
+        console.log("Demuxed", result);
+        console.log("FPS:", fps);
+        console.log("Frame count:", frameCount);
+        console.log("Duration:", duration);
 
-            const handleDecodedFrame = async (frame: VideoFrame) => {
-              const frameNumber = Math.ceil(
-                (frame.timestamp / 1_000_000) * this.fps,
-              );
-              this.decodedFrames[frameNumber] = frame;
-              this.checkShouldResolve(frameNumber);
-            };
+        this.samples = chunks;
 
-            const videoDecoder = new VideoDecoder({
-              output: (frame) => handleDecodedFrame(frame),
-              error: (error) => {
-                console.error("Decoding error:", error);
-              },
-            });
+        this.canvas = new OffscreenCanvas(
+          config.codedWidth!,
+          config.codedHeight!,
+        );
 
-            this.videoDecoder = videoDecoder;
-
-            let description: Uint8Array | undefined;
-            const trak = mp4boxFile.getTrackById(videoTrack.id);
-            for (const entry of trak.mdia.minf.stbl.stsd.entries) {
-              if (entry.avcC || entry.hvcC) {
-                const stream = new DataStream(
-                  undefined,
-                  0,
-                  DataStream.BIG_ENDIAN,
-                );
-                if (entry.avcC) {
-                  entry.avcC.write(stream);
-                } else {
-                  entry.hvcC.write(stream);
-                }
-                description = new Uint8Array(stream.buffer, 8); // Remove the box header.
-                break;
-              }
-            }
-
-            videoDecoder.configure({
-              codec: videoTrack.codec,
-              codedWidth: videoTrack.track_width,
-              codedHeight: videoTrack.track_height,
-              description,
-            });
-
-            this.canvas = new OffscreenCanvas(
-              videoTrack.track_width,
-              videoTrack.track_height,
-            );
-
-            mp4boxFile.onSamples = async (_id, _user, samples) => {
-              console.log("Demuxing", samples.length, "frames");
-              for (const sample of samples) {
-                this.samples.push(sample);
-              }
-              if (this.samples.length === frameCount) {
-                console.log("All samples demuxed");
-                resolve();
-              }
-            };
-            mp4boxFile.setExtractionOptions(videoTrack.id, videoTrack, {
-              nbSamples: 100,
-            });
-            mp4boxFile.start();
-            this.fps = fps;
-          } else {
-            reject("No video track found.");
-          }
-        };
-
-        // Convert ArrayBuffer to MP4Box format
-        const mp4Buffer = arrayBuffer as MP4ArrayBuffer;
-        mp4Buffer.fileStart = 0;
-
-        // Append the buffer to the mp4box file
-        mp4boxFile.appendBuffer(mp4Buffer);*/
+        this.fps = fps;
+        resolve();
       } catch (error) {
         reject(error);
       }

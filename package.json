@@ -14,8 +14,6 @@
   },
   "dependencies": {
     "@types/text-encoding": "^0.0.40",
-    "@libav.js/variant-webcodecs": "=6.4.7",
-    "@libav.js/variant-webm-vp9": "=6.4.7",
     "@rollup/plugin-commonjs": "^25.0.7",
     "@rollup/plugin-node-resolve": "^15.2.3",
     "@rollup/plugin-terser": "^0.4.4",
