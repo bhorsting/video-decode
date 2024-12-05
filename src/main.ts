@@ -1,13 +1,3 @@
-import { VideoFrameExtractor } from "./VideoFrameExtractor.ts";
+import { parseAllVideos } from "./parseAllVideos.ts";
 
-const testVideo = document.getElementById("video");
-
-const extractor: VideoFrameExtractor = new VideoFrameExtractor(
-  testVideo as HTMLVideoElement,
-);
-
-async function start() {
-  await extractor.start();
-}
-
-start();
+parseAllVideos(document.querySelectorAll("video"));

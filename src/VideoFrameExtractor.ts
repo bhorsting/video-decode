@@ -129,6 +129,7 @@ export class VideoFrameExtractor {
         this._currentTime = value;
 
         console.log("Poster updated and currentTime set:", value);
+        self.video.dispatchEvent(new Event("timeupdate"));
       },
       configurable: true,
       enumerable: true,
