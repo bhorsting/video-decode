@@ -1,5 +1,6 @@
 import MP4Box, { MP4ArrayBuffer } from "mp4box";
 import DataStream from "./datastream/DataStream.ts";
+import { LibAVDemuxer } from "./demux/LibAVDemuxer.ts";
 
 export class VideoFrameExtractor {
   private video: HTMLVideoElement;
@@ -152,18 +153,44 @@ export class VideoFrameExtractor {
     return new Promise(async (resolve, reject) => {
       try {
         // Fetch the file from the URL
-        const response = await fetch(url);
+        console.log("fetching", url);
+        let response: Response;
+        try {
+          response = await fetch(url, { mode: "cors" });
+        } catch (e) {
+          console.error("Failed to fetch file:", e);
+          reject(e);
+          return;
+        }
 
         if (!response.ok) {
           throw new Error(`Failed to fetch file: ${response.statusText}`);
         }
 
         // Read the response as an ArrayBuffer
-        const arrayBuffer = await response.arrayBuffer();
+        const blob = await response.blob();
+        const frameDecodedHandler = async (frame: VideoFrame) => {
+          const frameNumber = Math.ceil(
+            (frame.timestamp / 1_000_000) * this.fps,
+          );
+          this.decodedFrames[frameNumber] = frame;
+          this.checkShouldResolve(frameNumber);
+        };
+        const demuxer: LibAVDemuxer = new LibAVDemuxer();
+        /*
+        <option value="vp09.00.10.08.03.1.1.1.0">VP9</option>
+                <option value="avc1.42403e">H.264</option>
+         */
+        const result = await demuxer.start({
+          videoCodec: "avc1.42403e",
+          file: blob,
+          frameDecodedHandler,
+        });
+
+        console.log("Demuxed", result.chunks.length, "chunks");
 
         // Create a new mp4box file instance
-        const mp4boxFile = MP4Box.createFile();
-        this.mp4boxFile = mp4boxFile;
+        /*
         mp4boxFile.onReady = (info) => {
           // Find the video track
           const videoTrack = info.tracks.find((track) => track.movie_duration);
@@ -247,7 +274,7 @@ export class VideoFrameExtractor {
         mp4Buffer.fileStart = 0;
 
         // Append the buffer to the mp4box file
-        mp4boxFile.appendBuffer(mp4Buffer);
+        mp4boxFile.appendBuffer(mp4Buffer);*/
       } catch (error) {
         reject(error);
       }
